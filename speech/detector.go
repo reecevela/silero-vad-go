@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	hcLen      = 2 * 1 * 64
 	stateLen   = 2 * 1 * 128
 	contextLen = 64
 )
@@ -92,8 +93,13 @@ type Detector struct {
 
 	cfg DetectorConfig
 
+	// v5+
 	state [stateLen]float32
 	ctx   [contextLen]float32
+
+	// v4
+	h [hcLen]float32
+	c [hcLen]float32
 
 	currSample int
 	triggered  bool
@@ -163,7 +169,11 @@ func NewDetector(cfg DetectorConfig) (*Detector, error) {
 	sd.cStrings["sr"] = C.CString("sr")
 	sd.cStrings["state"] = C.CString("state")
 	sd.cStrings["stateN"] = C.CString("stateN")
+	sd.cStrings["h"] = C.CString("h")
+	sd.cStrings["c"] = C.CString("c")
 	sd.cStrings["output"] = C.CString("output")
+	sd.cStrings["hn"] = C.CString("hn")
+	sd.cStrings["cn"] = C.CString("cn")
 
 	return &sd, nil
 }
@@ -252,6 +262,14 @@ func (sd *Detector) Detect(pcm []float32) ([]Segment, error) {
 }
 
 func (sd *Detector) DetectWindows(pcm []float32) ([]float32, error) {
+	return sd.detectWindows(pcm, true)
+}
+
+func (sd *Detector) DetectWindowsV4(pcm []float32) ([]float32, error) {
+	return sd.detectWindows(pcm, false)
+}
+
+func (sd *Detector) detectWindows(pcm []float32, v5 bool) ([]float32, error) {
 	if sd == nil {
 		return nil, fmt.Errorf("invalid nil detector")
 	}
@@ -272,7 +290,13 @@ func (sd *Detector) DetectWindows(pcm []float32) ([]float32, error) {
 	windows := make([]float32, len(pcm)/windowSize)
 
 	for i := 0; i < len(windows); i++ {
-		speechProb, err := sd.Infer(pcm[i*windowSize : (i+1)*windowSize])
+		var speechProb float32
+		var err error
+		if v5 {
+			speechProb, err = sd.Infer(pcm[i*windowSize : (i+1)*windowSize])
+		} else {
+			speechProb, err = sd.InferV4(pcm[i*windowSize : (i+1)*windowSize])
+		}
 		if err != nil {
 			return nil, fmt.Errorf("infer failed: %w", err)
 		}
@@ -294,6 +318,10 @@ func (sd *Detector) Reset() error {
 	}
 	for i := 0; i < contextLen; i++ {
 		sd.ctx[i] = 0
+	}
+	for i := 0; i < hcLen; i++ {
+		sd.h[i] = 0
+		sd.c[i] = 0
 	}
 
 	return nil
